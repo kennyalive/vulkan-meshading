@@ -23,6 +23,7 @@ static VkFormat get_depth_image_format() {
 void Vk_Demo::initialize(GLFWwindow* window) {
     Vk_Init_Params vk_init_params;
     vk_init_params.error_reporter = &error;
+    vk_init_params.physical_device_index = 1;
 
     std::array instance_extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
@@ -37,6 +38,7 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     std::array device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
+        VK_EXT_MESH_SHADER_EXTENSION_NAME,
     };
     vk_init_params.instance_extensions = std::span{ instance_extensions };
     vk_init_params.device_extensions = std::span{ device_extensions };
@@ -65,6 +67,11 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT };
     descriptor_buffer_features.descriptorBuffer = VK_TRUE;
     pnexer.next(descriptor_buffer_features);
+
+    VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+    mesh_shader_features.meshShader = VK_TRUE;
+    pnexer.next(mesh_shader_features);
 
     // Surface formats
     std::array surface_formats = {
@@ -130,7 +137,7 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &mapped_uniform_buffer, "uniform_buffer");
 
     descriptor_set_layout = Vk_Descriptor_Set_Layout()
-        .uniform_buffer(0, VK_SHADER_STAGE_VERTEX_BIT)
+        .uniform_buffer(0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_MESH_BIT_EXT)
         .sampled_image(1, VK_SHADER_STAGE_FRAGMENT_BIT)
         .sampler(2, VK_SHADER_STAGE_FRAGMENT_BIT)
         .create("set_layout");
@@ -138,11 +145,12 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     pipeline_layout = vk_create_pipeline_layout({ descriptor_set_layout }, {}, "pipeline_layout");
 
     // Pipeline.
+    Vk_Shader_Module vertex_shader(get_resource_path("spirv/mesh.vert.spv"));
+    Vk_Shader_Module fragment_shader(get_resource_path("spirv/mesh.frag.spv"));
+    Vk_Shader_Module basic_mesh_shader(get_resource_path("spirv/basic.mesh.spv"));
+
     Vk_Graphics_Pipeline_State state = get_default_graphics_pipeline_state();
     {
-		Vk_Shader_Module vertex_shader(get_resource_path("spirv/mesh.vert.spv"));
-		Vk_Shader_Module fragment_shader(get_resource_path("spirv/mesh.frag.spv"));
-
         // VkVertexInputBindingDescription
         state.vertex_bindings[0].binding = 0;
         state.vertex_bindings[0].stride = sizeof(Vertex);
@@ -165,9 +173,14 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         state.color_attachment_formats[0] = vk.surface_format.format;
         state.color_attachment_count = 1;
         state.depth_attachment_format = get_depth_image_format();
-
-        pipeline = vk_create_graphics_pipeline(state, vertex_shader.handle, fragment_shader.handle, pipeline_layout, "draw_mesh_pipeline");
     }
+    pipeline = vk_create_graphics_pipeline(state,
+        vertex_shader.handle, fragment_shader.handle,
+        pipeline_layout, "draw_mesh_pipeline");
+
+    meshize_basic_pipeline = vk_create_graphics_pipeline(state,
+        VK_NULL_HANDLE, basic_mesh_shader.handle, fragment_shader.handle,
+        pipeline_layout, "basic_mesh_shader_pipeline");
 
     // Descriptor buffer.
     {
@@ -277,6 +290,7 @@ void Vk_Demo::shutdown() {
     vkDestroyDescriptorSetLayout(vk.device, descriptor_set_layout, nullptr);
     vkDestroyPipelineLayout(vk.device, pipeline_layout, nullptr);
     vkDestroyPipeline(vk.device, pipeline, nullptr);
+    vkDestroyPipeline(vk.device, meshize_basic_pipeline, nullptr);
 
     vk_shutdown();
 }
@@ -370,16 +384,22 @@ void Vk_Demo::draw_frame() {
     rendering_info.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(vk.command_buffer, &rendering_info);
-    const VkDeviceSize zero_offset = 0;
-    vkCmdBindVertexBuffers(vk.command_buffer, 0, 1, &gpu_mesh.vertex_buffer.handle, &zero_offset);
-    vkCmdBindIndexBuffer(vk.command_buffer, gpu_mesh.index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
 
     const uint32_t buffer_index = 0;
     const VkDeviceSize set_offset = 0;
     vkCmdSetDescriptorBufferOffsetsEXT(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_index, &set_offset);
 
-    vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    vkCmdDrawIndexed(vk.command_buffer, gpu_mesh.index_count, 1, 0, 0, 0);
+    if (render_mode == RenderMode::rasterize_model) {
+        const VkDeviceSize zero_offset = 0;
+        vkCmdBindVertexBuffers(vk.command_buffer, 0, 1, &gpu_mesh.vertex_buffer.handle, &zero_offset);
+        vkCmdBindIndexBuffer(vk.command_buffer, gpu_mesh.index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdDrawIndexed(vk.command_buffer, gpu_mesh.index_count, 1, 0, 0, 0);
+    }
+    else if (render_mode == RenderMode::meshize_basic) {
+        vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshize_basic_pipeline);
+        vkCmdDrawMeshTasksEXT(vk.command_buffer, 1, 1, 1);
+    }
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vk.command_buffer);
     vkCmdEndRendering(vk.command_buffer);
@@ -400,6 +420,8 @@ void Vk_Demo::do_imgui() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    ImGui::GetIO().FontGlobalScale = 1.25f;
+
     if (!ImGui::GetIO().WantCaptureKeyboard) {
         if (ImGui::IsKeyPressed(ImGuiKey_F10)) {
             show_ui = !show_ui;
@@ -409,6 +431,12 @@ void Vk_Demo::do_imgui() {
         }
         if (ImGui::IsKeyPressed(ImGuiKey_S) || ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
             camera_pos.z += 0.2f;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_1)) {
+            render_mode = RenderMode::rasterize_model;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_2)) {
+            render_mode = RenderMode::meshize_basic;
         }
     }
     if (show_ui) {
@@ -435,6 +463,15 @@ void Vk_Demo::do_imgui() {
             ImGui::Spacing();
             ImGui::Checkbox("Vertical sync", &vsync);
             ImGui::Checkbox("Animate", &animate);
+
+            ImGui::Separator();
+            ImGui::Text("Render mode:");
+            if (ImGui::RadioButton("Rasterize model", render_mode == RenderMode::rasterize_model)) {
+                render_mode = RenderMode::rasterize_model;
+            }
+            if (ImGui::RadioButton("Meshize basic", render_mode == RenderMode::meshize_basic)) {
+                render_mode = RenderMode::meshize_basic;
+            }
 
             if (ImGui::BeginPopupContextWindow()) {
                 if (ImGui::MenuItem("Custom",       NULL, corner == -1)) corner = -1;

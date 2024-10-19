@@ -867,23 +867,10 @@ Vk_Graphics_Pipeline_State get_default_graphics_pipeline_state()
     return state;
 }
 
-VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
-    VkShaderModule vertex_shader, VkShaderModule fragment_shader,
+static VkPipeline vk_create_graphics_pipeline_base(const Vk_Graphics_Pipeline_State& state,
+    std::span< VkPipelineShaderStageCreateInfo> shader_stages,
     VkPipelineLayout pipeline_layout, const char* name)
 {
-    auto get_shader_stage_create_info = [](VkShaderStageFlagBits stage, VkShaderModule shader_module) {
-        VkPipelineShaderStageCreateInfo create_info{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-        create_info.stage  = stage;
-        create_info.module = shader_module;
-        create_info.pName  = "main";
-        return create_info;
-    };
-
-    VkPipelineShaderStageCreateInfo shader_stages_state[2] {
-        get_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vertex_shader),
-        get_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_shader)
-    };
-
     VkPipelineVertexInputStateCreateInfo vertex_input_state{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
     vertex_input_state.vertexBindingDescriptionCount    = state.vertex_binding_count;
     vertex_input_state.pVertexBindingDescriptions       = state.vertex_bindings;
@@ -908,8 +895,8 @@ VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
     VkGraphicsPipelineCreateInfo create_info { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
     create_info.pNext                                   = &rendering_create_info;
     create_info.flags                                   = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
-    create_info.stageCount                              = (uint32_t)std::size(shader_stages_state);
-    create_info.pStages                                 = shader_stages_state;
+    create_info.stageCount                              = (uint32_t)shader_stages.size();
+    create_info.pStages                                 = shader_stages.data();
     create_info.pVertexInputState                       = &vertex_input_state;
     create_info.pInputAssemblyState                     = &state.input_assembly_state;
     create_info.pViewportState                          = &state.viewport_state;
@@ -925,6 +912,43 @@ VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &create_info, nullptr, &pipeline));
     vk_set_debug_name(pipeline, name);
     return pipeline;
+}
+
+static VkPipelineShaderStageCreateInfo get_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shader_module) {
+    VkPipelineShaderStageCreateInfo create_info{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    create_info.stage = stage;
+    create_info.module = shader_module;
+    create_info.pName = "main";
+    return create_info;
+}
+
+VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
+    VkShaderModule vertex_shader, VkShaderModule fragment_shader,
+    VkPipelineLayout pipeline_layout, const char* name) {
+    assert(vertex_shader != VK_NULL_HANDLE);
+    assert(fragment_shader != VK_NULL_HANDLE);
+
+    VkPipelineShaderStageCreateInfo shader_stages[2]{
+        get_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vertex_shader),
+        get_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_shader)
+    };
+    return vk_create_graphics_pipeline_base(state, std::span<VkPipelineShaderStageCreateInfo>(shader_stages), pipeline_layout, name);
+}
+
+VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
+    VkShaderModule task_shader, VkShaderModule mesh_shader, VkShaderModule fragment_shader,
+    VkPipelineLayout pipeline_layout, const char* name) {
+    assert(mesh_shader != VK_NULL_HANDLE);
+    assert(fragment_shader != VK_NULL_HANDLE);
+
+    VkPipelineShaderStageCreateInfo shader_stages[3];
+    int stage_count = 0;
+    if (task_shader != VK_NULL_HANDLE) {
+        shader_stages[stage_count++] = get_shader_stage_create_info(VK_SHADER_STAGE_TASK_BIT_EXT, task_shader);
+    }
+    shader_stages[stage_count++] = get_shader_stage_create_info(VK_SHADER_STAGE_MESH_BIT_EXT, mesh_shader);
+    shader_stages[stage_count++] = get_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_shader);
+    return vk_create_graphics_pipeline_base(state, std::span<VkPipelineShaderStageCreateInfo>(shader_stages, stage_count), pipeline_layout, name);
 }
 
 VkPipeline vk_create_compute_pipeline(VkShaderModule compute_shader, VkPipelineLayout pipeline_layout, const char* name)

@@ -6,6 +6,11 @@
 
 struct GLFWwindow;
 
+enum class RenderMode {
+    rasterize_model,
+    meshize_basic,
+};
+
 class Vk_Demo {
 public:
     void initialize(GLFWwindow* glfw_window);
@@ -27,6 +32,8 @@ private:
     bool vsync = true;
     bool animate = false;
 
+    RenderMode render_mode = RenderMode::rasterize_model;
+
     Time last_frame_time{};
     double sim_time = 0;
     Vector3 camera_pos = Vector3(0, 0.5, 3.0);
@@ -46,6 +53,8 @@ private:
     void* mapped_uniform_buffer = nullptr;
     Vk_Image texture;
     VkSampler sampler;
+
+    VkPipeline meshize_basic_pipeline = VK_NULL_HANDLE;
 
     struct {
         Vk_Buffer vertex_buffer;

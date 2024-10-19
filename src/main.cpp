@@ -29,8 +29,8 @@ static bool parse_command_line(int argc, char** argv) {
     return true;
 }
 
-static int window_width = 720;
-static int window_height = 720;
+static int window_width = 1024;
+static int window_height = 768;
 
 static void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS) {

@@ -106,6 +106,10 @@ VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
     VkShaderModule vertex_shader, VkShaderModule fragment_shader,
     VkPipelineLayout pipeline_layout, const char* name);
 
+VkPipeline vk_create_graphics_pipeline(const Vk_Graphics_Pipeline_State& state,
+    VkShaderModule task_shader, VkShaderModule mesh_shader, VkShaderModule fragment_shader,
+    VkPipelineLayout pipeline_layout, const char* name);
+
 VkPipeline vk_create_compute_pipeline(VkShaderModule compute_shader,
     VkPipelineLayout pipeline_layout, const char* name);
 

@@ -14,6 +14,8 @@ set(SHADER_SOURCE
     src/shaders/mesh.vert.glsl
     src/shaders/mesh.frag.glsl
     src/shaders/basic.mesh.glsl
+    src/shaders/cube.mesh.glsl
+    src/shaders/cube.frag.glsl
 )
 
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)

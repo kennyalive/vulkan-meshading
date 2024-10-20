@@ -148,6 +148,8 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     Vk_Shader_Module vertex_shader(get_resource_path("spirv/mesh.vert.spv"));
     Vk_Shader_Module fragment_shader(get_resource_path("spirv/mesh.frag.spv"));
     Vk_Shader_Module basic_mesh_shader(get_resource_path("spirv/basic.mesh.spv"));
+    Vk_Shader_Module cube_mesh_shader(get_resource_path("spirv/cube.mesh.spv"));
+    Vk_Shader_Module cube_fragment_shader(get_resource_path("spirv/cube.frag.spv"));
 
     Vk_Graphics_Pipeline_State state = get_default_graphics_pipeline_state();
     {
@@ -181,6 +183,10 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     meshize_basic_pipeline = vk_create_graphics_pipeline(state,
         VK_NULL_HANDLE, basic_mesh_shader.handle, fragment_shader.handle,
         pipeline_layout, "basic_mesh_shader_pipeline");
+
+    cube_pipeline = vk_create_graphics_pipeline(state,
+        VK_NULL_HANDLE, cube_mesh_shader.handle, cube_fragment_shader.handle,
+        pipeline_layout, "cube_pipeline");
 
     // Descriptor buffer.
     {
@@ -291,6 +297,7 @@ void Vk_Demo::shutdown() {
     vkDestroyPipelineLayout(vk.device, pipeline_layout, nullptr);
     vkDestroyPipeline(vk.device, pipeline, nullptr);
     vkDestroyPipeline(vk.device, meshize_basic_pipeline, nullptr);
+    vkDestroyPipeline(vk.device, cube_pipeline, nullptr);
 
     vk_shutdown();
 }
@@ -326,7 +333,8 @@ void Vk_Demo::run_frame() {
 	float aspect_ratio = (float)vk.surface_size.width / (float)vk.surface_size.height;
 	Matrix4x4 projection_transform = perspective_transform_opengl_z01(radians(45.0f), aspect_ratio, 0.1f, 50.0f);
 	Matrix3x4 view_transform = look_at_transform(camera_pos, Vector3(0), Vector3(0, 1, 0));
-    Matrix3x4 model_transform = rotate_y(Matrix3x4::identity, (float)sim_time * radians(20.0f));
+    Matrix3x4 model_transform = rotate_y(Matrix3x4::identity, (float)sim_time * radians(20.0f)) *
+        rotate_x(Matrix3x4::identity, (float)sim_time * radians(5.0f));
     Matrix4x4 model_view_proj = projection_transform * view_transform * model_transform;
     memcpy(mapped_uniform_buffer, &model_view_proj, sizeof(model_view_proj));
 
@@ -400,6 +408,10 @@ void Vk_Demo::draw_frame() {
         vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshize_basic_pipeline);
         vkCmdDrawMeshTasksEXT(vk.command_buffer, 1, 1, 1);
     }
+    else if (render_mode == RenderMode::cube) {
+        vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, cube_pipeline);
+        vkCmdDrawMeshTasksEXT(vk.command_buffer, 1, 1, 1);
+    }
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vk.command_buffer);
     vkCmdEndRendering(vk.command_buffer);
@@ -438,6 +450,9 @@ void Vk_Demo::do_imgui() {
         if (ImGui::IsKeyPressed(ImGuiKey_2)) {
             render_mode = RenderMode::meshize_basic;
         }
+        if (ImGui::IsKeyPressed(ImGuiKey_3)) {
+            render_mode = RenderMode::cube;
+        }
     }
     if (show_ui) {
         const float margin = 10.0f;
@@ -466,11 +481,14 @@ void Vk_Demo::do_imgui() {
 
             ImGui::Separator();
             ImGui::Text("Render mode:");
-            if (ImGui::RadioButton("Rasterize model", render_mode == RenderMode::rasterize_model)) {
+            if (ImGui::RadioButton("[1] Rasterize model", render_mode == RenderMode::rasterize_model)) {
                 render_mode = RenderMode::rasterize_model;
             }
-            if (ImGui::RadioButton("Meshize basic", render_mode == RenderMode::meshize_basic)) {
+            if (ImGui::RadioButton("[2] Meshize basic", render_mode == RenderMode::meshize_basic)) {
                 render_mode = RenderMode::meshize_basic;
+            }
+            if (ImGui::RadioButton("[3] Cube", render_mode == RenderMode::cube)) {
+                render_mode = RenderMode::cube;
             }
 
             if (ImGui::BeginPopupContextWindow()) {

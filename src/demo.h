@@ -9,6 +9,7 @@ struct GLFWwindow;
 enum class RenderMode {
     rasterize_model,
     meshize_basic,
+    cube,
 };
 
 class Vk_Demo {
@@ -55,6 +56,7 @@ private:
     VkSampler sampler;
 
     VkPipeline meshize_basic_pipeline = VK_NULL_HANDLE;
+    VkPipeline cube_pipeline = VK_NULL_HANDLE;
 
     struct {
         Vk_Buffer vertex_buffer;

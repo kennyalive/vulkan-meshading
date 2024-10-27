@@ -396,5 +396,6 @@ Meshlets build_meshlets(const Triangle_Mesh& mesh) {
         }
         meshlets.debug_triangle_meshlet_index.push_back((uint32_t)meshlets.meshlets.size());
     }
+    meshlets.meshlets.push_back(current_meshlet);
     return meshlets;
 }

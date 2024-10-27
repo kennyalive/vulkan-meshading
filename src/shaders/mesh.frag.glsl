@@ -12,8 +12,11 @@ layout(std430, binding=3) readonly buffer DebugMeshletIndices {
 };
 
 void main() {
-    //color_attachment0 = texture(sampler2D(image, image_sampler), frag_uv);
-    uint k = uint(debug_meshlet_indices[gl_PrimitiveID]);
-    //color_attachment0 = (k == 50) ? vec4(1, 0, 0, 1) : vec4(0, 0, 0, 1);
-    color_attachment0 = vec4((k & 1) == 0 ? 0 : 1, (k & 2) == 0 ? 0 : 1, (k & 4) == 0 ? 0 : 1, 1);
+    color_attachment0 = texture(sampler2D(image, image_sampler), frag_uv);
+
+    // uint k = uint(debug_meshlet_indices[gl_PrimitiveID]);
+    // debug: Highlight specific meshlet
+    // color_attachment0 = (k == 0) ? vec4(1, 0, 0, 1) : vec4(0, 0, 0, 1);
+    // debug: Show all meshlets
+    // color_attachment0 = vec4((k & 1) == 0 ? 0 : 1, (k & 2) == 0 ? 0 : 1, (k & 4) == 0 ? 0 : 1, 1);
 }

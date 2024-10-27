@@ -74,6 +74,11 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     mesh_shader_features.meshShader = VK_TRUE;
     pnexer.next(mesh_shader_features);
 
+    VkPhysicalDevice8BitStorageFeatures storage_8bit_features{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES };
+    storage_8bit_features.storageBuffer8BitAccess = VK_TRUE;
+    pnexer.next(storage_8bit_features);
+
     // Surface formats
     std::array surface_formats = {
         VK_FORMAT_B8G8R8A8_SRGB,
@@ -101,7 +106,7 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         Triangle_Mesh mesh = load_obj_model(get_resource_path("model/mesh.obj"), 1.25f);
         {
             const VkDeviceSize size = mesh.vertices.size() * sizeof(mesh.vertices[0]);
-            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             gpu_mesh.vertex_buffer = vk_create_buffer(size, usage, mesh.vertices.data(), "vertex_buffer");
             gpu_mesh.vertex_count = uint32_t(mesh.vertices.size());
         }
@@ -143,21 +148,40 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         meshlets.debug_triangle_meshlet_index.data(), "debug_meshlet_index_buffer");
 
+    meshlet_vertices_buffer = vk_create_buffer(meshlets.vertices.size() * sizeof(uint32_t),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        meshlets.vertices.data(), "meshlet_vertices");
+
+    meshlet_indices_buffer = vk_create_buffer(meshlets.indices.size() * sizeof(uint8_t),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        meshlets.indices.data(), "meshlet_indices");
+
+    meshlets_buffer = vk_create_buffer(meshlets.meshlets.size() * sizeof(Meshlet),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        meshlets.meshlets.data(), "meshlets");
+
     descriptor_set_layout = Vk_Descriptor_Set_Layout()
         .uniform_buffer(0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_MESH_BIT_EXT)
         .sampled_image(1, VK_SHADER_STAGE_FRAGMENT_BIT)
         .sampler(2, VK_SHADER_STAGE_FRAGMENT_BIT)
         .storage_buffer(3, VK_SHADER_STAGE_FRAGMENT_BIT)
+        .storage_buffer(4, VK_SHADER_STAGE_MESH_BIT_EXT) // vertices
+        .storage_buffer(5, VK_SHADER_STAGE_MESH_BIT_EXT) // meshlet vertices
+        .storage_buffer(6, VK_SHADER_STAGE_MESH_BIT_EXT) // meshlet indices
+        .storage_buffer(7, VK_SHADER_STAGE_MESH_BIT_EXT) // meshlets
         .create("set_layout");
 
     pipeline_layout = vk_create_pipeline_layout({ descriptor_set_layout }, {}, "pipeline_layout");
 
-    // Pipeline.
+    // Pipelines.
     Vk_Shader_Module vertex_shader(get_resource_path("spirv/mesh.vert.spv"));
     Vk_Shader_Module fragment_shader(get_resource_path("spirv/mesh.frag.spv"));
     Vk_Shader_Module basic_mesh_shader(get_resource_path("spirv/basic.mesh.spv"));
     Vk_Shader_Module cube_mesh_shader(get_resource_path("spirv/cube.mesh.spv"));
     Vk_Shader_Module cube_fragment_shader(get_resource_path("spirv/cube.frag.spv"));
+
+    Vk_Shader_Module model_meshlets_mesh_shader(get_resource_path("spirv/model_meshlets.mesh.spv"));
+    Vk_Shader_Module model_meshlets_fragment_shader(get_resource_path("spirv/model_meshlets.frag.spv"));
 
     Vk_Graphics_Pipeline_State state = get_default_graphics_pipeline_state();
     {
@@ -184,17 +208,29 @@ void Vk_Demo::initialize(GLFWwindow* window) {
         state.color_attachment_count = 1;
         state.depth_attachment_format = get_depth_image_format();
     }
+
+    Vk_Graphics_Pipeline_State state2 = get_default_graphics_pipeline_state();
+    {
+        state2.color_attachment_formats[0] = vk.surface_format.format;
+        state2.color_attachment_count = 1;
+        state2.depth_attachment_format = get_depth_image_format();
+    }
+
     pipeline = vk_create_graphics_pipeline(state,
         vertex_shader.handle, fragment_shader.handle,
         pipeline_layout, "draw_mesh_pipeline");
 
-    meshize_basic_pipeline = vk_create_graphics_pipeline(state,
+    meshize_basic_pipeline = vk_create_graphics_pipeline(state2,
         VK_NULL_HANDLE, basic_mesh_shader.handle, fragment_shader.handle,
         pipeline_layout, "basic_mesh_shader_pipeline");
 
-    cube_pipeline = vk_create_graphics_pipeline(state,
+    cube_pipeline = vk_create_graphics_pipeline(state2,
         VK_NULL_HANDLE, cube_mesh_shader.handle, cube_fragment_shader.handle,
         pipeline_layout, "cube_pipeline");
+
+    model_meshlets_pipeline = vk_create_graphics_pipeline(state2,
+        VK_NULL_HANDLE, model_meshlets_mesh_shader.handle, model_meshlets_fragment_shader.handle,
+        pipeline_layout, "model_meshlets_pipeline");
 
     // Descriptor buffer.
     {
@@ -272,6 +308,70 @@ void Vk_Demo::initialize(GLFWwindow* window) {
             vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
                 (uint8_t*)mapped_descriptor_buffer_ptr + offset);
         }
+
+        // Write descriptor 4 (storage buffer): vertices
+        {
+            VkDescriptorAddressInfoEXT address_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT };
+            address_info.address = gpu_mesh.vertex_buffer.device_address;
+            address_info.range = gpu_mesh.vertex_count * sizeof(Vertex);
+
+            VkDescriptorGetInfoEXT descriptor_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT };
+            descriptor_info.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptor_info.data.pStorageBuffer = &address_info;
+
+            VkDeviceSize offset;
+            vkGetDescriptorSetLayoutBindingOffsetEXT(vk.device, descriptor_set_layout, 4, &offset);
+            vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
+                (uint8_t*)mapped_descriptor_buffer_ptr + offset);
+        }
+
+        // Write descriptor 5 (storage buffer): meshlet vertices
+        {
+            VkDescriptorAddressInfoEXT address_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT };
+            address_info.address = meshlet_vertices_buffer.device_address;
+            address_info.range = meshlets.vertices.size() * sizeof(uint32_t);
+
+            VkDescriptorGetInfoEXT descriptor_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT };
+            descriptor_info.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptor_info.data.pStorageBuffer = &address_info;
+
+            VkDeviceSize offset;
+            vkGetDescriptorSetLayoutBindingOffsetEXT(vk.device, descriptor_set_layout, 5, &offset);
+            vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
+                (uint8_t*)mapped_descriptor_buffer_ptr + offset);
+        }
+
+        // Write descriptor 6 (storage buffer): meshlet indices
+        {
+            VkDescriptorAddressInfoEXT address_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT };
+            address_info.address = meshlet_indices_buffer.device_address;
+            address_info.range = meshlets.indices.size() * sizeof(uint8_t);
+
+            VkDescriptorGetInfoEXT descriptor_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT };
+            descriptor_info.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptor_info.data.pStorageBuffer = &address_info;
+
+            VkDeviceSize offset;
+            vkGetDescriptorSetLayoutBindingOffsetEXT(vk.device, descriptor_set_layout, 6, &offset);
+            vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
+                (uint8_t*)mapped_descriptor_buffer_ptr + offset);
+        }
+
+        // Write descriptor 7 (storage buffer): meshlets
+        {
+            VkDescriptorAddressInfoEXT address_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT };
+            address_info.address = meshlets_buffer.device_address;
+            address_info.range = meshlets.meshlets.size() * sizeof(Meshlet);
+
+            VkDescriptorGetInfoEXT descriptor_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT };
+            descriptor_info.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptor_info.data.pStorageBuffer = &address_info;
+
+            VkDeviceSize offset;
+            vkGetDescriptorSetLayoutBindingOffsetEXT(vk.device, descriptor_set_layout, 7, &offset);
+            vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
+                (uint8_t*)mapped_descriptor_buffer_ptr + offset);
+        }
     }
 
     // ImGui setup.
@@ -316,6 +416,9 @@ void Vk_Demo::shutdown() {
     descriptor_buffer.destroy();
     uniform_buffer.destroy();
     debug_meshlet_index_buffer.destroy();
+    meshlet_vertices_buffer.destroy();
+    meshlet_indices_buffer.destroy();
+    meshlets_buffer.destroy();
 
     vkDestroySampler(vk.device, sampler, nullptr);
     vkDestroyDescriptorSetLayout(vk.device, descriptor_set_layout, nullptr);
@@ -323,6 +426,7 @@ void Vk_Demo::shutdown() {
     vkDestroyPipeline(vk.device, pipeline, nullptr);
     vkDestroyPipeline(vk.device, meshize_basic_pipeline, nullptr);
     vkDestroyPipeline(vk.device, cube_pipeline, nullptr);
+    vkDestroyPipeline(vk.device, model_meshlets_pipeline, nullptr);
 
     vk_shutdown();
 }
@@ -437,6 +541,10 @@ void Vk_Demo::draw_frame() {
         vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, cube_pipeline);
         vkCmdDrawMeshTasksEXT(vk.command_buffer, 1, 1, 1);
     }
+    else if (render_mode == RenderMode::rasterize_model_meshlets) {
+        vkCmdBindPipeline(vk.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, model_meshlets_pipeline);
+        vkCmdDrawMeshTasksEXT(vk.command_buffer, (uint32_t)meshlets.meshlets.size(), 1, 1);
+    }
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vk.command_buffer);
     vkCmdEndRendering(vk.command_buffer);
@@ -478,6 +586,9 @@ void Vk_Demo::do_imgui() {
         if (ImGui::IsKeyPressed(ImGuiKey_3)) {
             render_mode = RenderMode::cube;
         }
+        if (ImGui::IsKeyPressed(ImGuiKey_4)) {
+            render_mode = RenderMode::rasterize_model_meshlets;
+        }
     }
     if (show_ui) {
         const float margin = 10.0f;
@@ -506,7 +617,7 @@ void Vk_Demo::do_imgui() {
 
             ImGui::Separator();
             ImGui::Text("Render mode:");
-            if (ImGui::RadioButton("[1] Rasterize model", render_mode == RenderMode::rasterize_model)) {
+            if (ImGui::RadioButton("[1] Rasterize model classic", render_mode == RenderMode::rasterize_model)) {
                 render_mode = RenderMode::rasterize_model;
             }
             if (ImGui::RadioButton("[2] Meshize basic", render_mode == RenderMode::meshize_basic)) {
@@ -514,6 +625,9 @@ void Vk_Demo::do_imgui() {
             }
             if (ImGui::RadioButton("[3] Cube", render_mode == RenderMode::cube)) {
                 render_mode = RenderMode::cube;
+            }
+            if (ImGui::RadioButton("[4] Rasterize model meshlets", render_mode == RenderMode::rasterize_model_meshlets)) {
+                render_mode = RenderMode::rasterize_model_meshlets;
             }
 
             if (ImGui::BeginPopupContextWindow()) {

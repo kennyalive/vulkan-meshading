@@ -10,6 +10,7 @@ enum class RenderMode {
     rasterize_model,
     meshize_basic,
     cube,
+    rasterize_model_meshlets,
 };
 
 class Vk_Demo {
@@ -61,6 +62,11 @@ private:
 
     VkPipeline meshize_basic_pipeline = VK_NULL_HANDLE;
     VkPipeline cube_pipeline = VK_NULL_HANDLE;
+
+    Vk_Buffer meshlet_vertices_buffer;
+    Vk_Buffer meshlet_indices_buffer;
+    Vk_Buffer meshlets_buffer;
+    VkPipeline model_meshlets_pipeline = VK_NULL_HANDLE;
 
     struct {
         Vk_Buffer vertex_buffer;

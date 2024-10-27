@@ -309,3 +309,29 @@ struct Triangle_Mesh {
 };
 
 Triangle_Mesh load_obj_model(const std::string& path, float additional_scale);
+
+struct Meshlet {
+    // Range in Meshlets::vertices
+    uint32_t first_vertex = 0;
+    uint32_t vertex_count = 0;
+
+    // Range in Meshlets::indices
+    uint32_t first_index = 0;
+    uint32_t index_count = 0;
+};
+
+struct Meshlets {
+    // Indexes Triangle_Mesh::vertices.
+    // Meshlet vertices are defined by the range Meshlet::first_vertex/vertex_count.
+    std::vector<uint32_t> vertices;
+
+    // Indexes Meshlets::vertices relative to Meshlet::first_vertex position.
+    // Meshlet triangles are defined by the range Meshlet::first_index/index_count.
+    std::vector<uint8_t> indices;
+
+    std::vector<Meshlet> meshlets;
+
+    std::vector<uint32_t> debug_triangle_meshlet_index;
+};
+
+Meshlets build_meshlets(const Triangle_Mesh& mesh);

@@ -33,6 +33,8 @@ private:
     bool vsync = true;
     bool animate = false;
 
+    Meshlets meshlets;
+
     RenderMode render_mode = RenderMode::rasterize_model;
 
     Time last_frame_time{};
@@ -54,6 +56,8 @@ private:
     void* mapped_uniform_buffer = nullptr;
     Vk_Image texture;
     VkSampler sampler;
+
+    Vk_Buffer debug_meshlet_index_buffer;
 
     VkPipeline meshize_basic_pipeline = VK_NULL_HANDLE;
     VkPipeline cube_pipeline = VK_NULL_HANDLE;

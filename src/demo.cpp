@@ -23,7 +23,7 @@ static VkFormat get_depth_image_format() {
 void Vk_Demo::initialize(GLFWwindow* window) {
     Vk_Init_Params vk_init_params;
     vk_init_params.error_reporter = &error;
-    vk_init_params.physical_device_index = 1;
+    vk_init_params.physical_device_index = 0;
 
     std::array instance_extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
@@ -45,8 +45,9 @@ void Vk_Demo::initialize(GLFWwindow* window) {
 
     // Specify required features.
     VkPhysicalDeviceFeatures2 features2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    Vk_PNexer pnexer(features2);
     vk_init_params.device_create_info_pnext = (const VkBaseInStructure*)&features2;
+    features2.features.geometryShader = VK_TRUE;
+    Vk_PNexer pnexer(features2);
 
     VkPhysicalDeviceBufferDeviceAddressFeatures buffer_device_address_features{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
@@ -110,6 +111,8 @@ void Vk_Demo::initialize(GLFWwindow* window) {
             gpu_mesh.index_buffer = vk_create_buffer(size, usage, mesh.indices.data(), "index_buffer");
             gpu_mesh.index_count = uint32_t(mesh.indices.size());
         }
+
+        meshlets = build_meshlets(mesh);
     }
 
     // Texture.
@@ -136,10 +139,15 @@ void Vk_Demo::initialize(GLFWwindow* window) {
     uniform_buffer = vk_create_mapped_buffer(static_cast<VkDeviceSize>(sizeof(Matrix4x4)),
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &mapped_uniform_buffer, "uniform_buffer");
 
+    debug_meshlet_index_buffer = vk_create_buffer(meshlets.debug_triangle_meshlet_index.size() * sizeof(uint32_t),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        meshlets.debug_triangle_meshlet_index.data(), "debug_meshlet_index_buffer");
+
     descriptor_set_layout = Vk_Descriptor_Set_Layout()
         .uniform_buffer(0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_MESH_BIT_EXT)
         .sampled_image(1, VK_SHADER_STAGE_FRAGMENT_BIT)
         .sampler(2, VK_SHADER_STAGE_FRAGMENT_BIT)
+        .storage_buffer(3, VK_SHADER_STAGE_FRAGMENT_BIT)
         .create("set_layout");
 
     pipeline_layout = vk_create_pipeline_layout({ descriptor_set_layout }, {}, "pipeline_layout");
@@ -248,6 +256,22 @@ void Vk_Demo::initialize(GLFWwindow* window) {
             vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.samplerDescriptorSize,
                 (uint8_t*)mapped_descriptor_buffer_ptr + offset);
         }
+
+        // Write descriptor 3 (storage buffer)
+        {
+            VkDescriptorAddressInfoEXT address_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT };
+            address_info.address = debug_meshlet_index_buffer.device_address;
+            address_info.range = meshlets.debug_triangle_meshlet_index.size() * sizeof(uint32_t);
+
+            VkDescriptorGetInfoEXT descriptor_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT };
+            descriptor_info.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptor_info.data.pStorageBuffer = &address_info;
+
+            VkDeviceSize offset;
+            vkGetDescriptorSetLayoutBindingOffsetEXT(vk.device, descriptor_set_layout, 3, &offset);
+            vkGetDescriptorEXT(vk.device, &descriptor_info, descriptor_buffer_properties.storageBufferDescriptorSize,
+                (uint8_t*)mapped_descriptor_buffer_ptr + offset);
+        }
     }
 
     // ImGui setup.
@@ -291,6 +315,7 @@ void Vk_Demo::shutdown() {
     texture.destroy();
     descriptor_buffer.destroy();
     uniform_buffer.destroy();
+    debug_meshlet_index_buffer.destroy();
 
     vkDestroySampler(vk.device, sampler, nullptr);
     vkDestroyDescriptorSetLayout(vk.device, descriptor_set_layout, nullptr);

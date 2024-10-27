@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 
 void error(const std::string& message)
 {
@@ -355,4 +356,45 @@ Triangle_Mesh load_obj_model(const std::string& path, float additional_scale) {
         v.pos *= scale;
     }
     return mesh;
+}
+
+constexpr uint32_t Max_Meshlet_Vertices = 64;
+constexpr uint32_t Max_Meshlet_Triangles = 64;
+
+Meshlets build_meshlets(const Triangle_Mesh& mesh) {
+    assert(mesh.indices.size() % 3 == 0);
+    Meshlets meshlets;
+    Meshlet current_meshlet;
+    std::unordered_map<uint32_t, uint8_t> local_index_map;
+    for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+        for (int k = 0; k < 3; k++) {
+            uint32_t index = mesh.indices[i + k];
+            uint8_t local_index;
+            if (auto it = local_index_map.find(index); it != local_index_map.end()) {
+                local_index = it->second;
+            }
+            else {
+                auto local_index_u64 = meshlets.vertices.size() - current_meshlet.first_vertex;
+                assert(local_index_u64 < 256);
+                local_index = (uint8_t)local_index_u64;
+                meshlets.vertices.push_back(index);
+                current_meshlet.vertex_count++;
+                local_index_map.insert({ index, local_index });
+            }
+            meshlets.indices.push_back(local_index);
+        }
+        current_meshlet.index_count += 3;
+
+        if (current_meshlet.vertex_count > Max_Meshlet_Vertices - 3 ||
+            current_meshlet.index_count == Max_Meshlet_Triangles * 3) {
+            meshlets.meshlets.push_back(current_meshlet);
+            current_meshlet.first_vertex = (uint32_t)meshlets.vertices.size();
+            current_meshlet.vertex_count = 0;
+            current_meshlet.first_index = (uint32_t)meshlets.indices.size();
+            current_meshlet.index_count = 0;
+            local_index_map.clear();
+        }
+        meshlets.debug_triangle_meshlet_index.push_back((uint32_t)meshlets.meshlets.size());
+    }
+    return meshlets;
 }
